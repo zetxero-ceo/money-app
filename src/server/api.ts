@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { Db } from "./db";
 import { bahtToSatang } from "./money";
 import { parseEntry } from "./parse";
-import { type Period, rangeForPeriod } from "./thai-date";
+import { type Period, rangeForPeriod, todayInBangkok } from "./thai-date";
 import { clearSessionCookie, readSessionToken, sessionCookie } from "./cookies";
 import {
   AuthError,
@@ -25,6 +25,7 @@ import {
   restoreTransaction,
   updateTransaction,
 } from "./services/transactions";
+import { getBudgetStatus, removeBudget, setBudget } from "./services/budgets";
 
 const PERIODS = ["today", "this_week", "this_month", "last_month", "this_year", "last_7_days", "last_30_days"];
 
@@ -66,6 +67,8 @@ const patchBody = z.object({
   category: z.string().optional(),
   occurredOn: date.optional(),
 });
+const month = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/);
+const budgetBody = z.object({ category: z.string().min(1), amount: z.union([z.number(), z.string()]) });
 
 function toSatang(amount: number | string): number {
   const s = bahtToSatang(amount);
@@ -134,6 +137,23 @@ export async function handleApi(request: Request, db: Db): Promise<Response> {
       if (!(from && to) && !PERIODS.includes(period)) return error(400, "period ไม่ถูกต้อง");
       const range = from && to ? { from, to } : rangeForPeriod(period as Period);
       return json(await getSummary(db, userId, range));
+    }
+
+    // ---- งบประมาณต่อหมวด ----
+    if (path === "/api/budgets" && method === "GET") {
+      const m = url.searchParams.get("month") ?? todayInBangkok().slice(0, 7);
+      if (!month.safeParse(m).success) return error(400, "month ต้องเป็น YYYY-MM");
+      return json(await getBudgetStatus(db, userId, m));
+    }
+    if (path === "/api/budgets" && method === "PUT") {
+      const body = budgetBody.safeParse(await readJson(request));
+      if (!body.success) return error(400, "ข้อมูลไม่ถูกต้อง");
+      return json(await setBudget(db, userId, { category: body.data.category, amountSatang: toSatang(body.data.amount) }));
+    }
+    const budgetMatch = path.match(/^\/api\/budgets\/([^/]+)$/);
+    if (budgetMatch && method === "DELETE") {
+      await removeBudget(db, userId, decodeURIComponent(budgetMatch[1]));
+      return json({ ok: true });
     }
 
     if (path === "/api/transactions" && method === "GET") {

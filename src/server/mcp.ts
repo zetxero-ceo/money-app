@@ -16,11 +16,13 @@ import {
   restoreTransaction,
   updateTransaction,
 } from "./services/transactions";
+import { getBudgetStatus, removeBudget, setBudget } from "./services/budgets";
 
 const PERIODS = ["today", "this_week", "this_month", "last_month", "this_year", "last_7_days", "last_30_days"] as const;
 const kindSchema = z.enum(["income", "expense"]);
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "ใช้รูปแบบ YYYY-MM-DD");
 const amountSchema = z.number().positive().describe("จำนวนเงินเป็นบาท เช่น 60 หรือ 65.50");
+const monthSchema = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "ใช้รูปแบบ YYYY-MM");
 
 function ok(data: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
@@ -176,6 +178,41 @@ export function buildMcpServer(db: Db, userId: string): McpServer {
     "list_categories",
     { title: "ดูหมวด", description: "รายชื่อหมวดรายรับและรายจ่าย", inputSchema: {}, annotations: { readOnlyHint: true } },
     () => run(async () => (await listCategories(db, userId)).map(({ name, kind }) => ({ name, kind }))),
+  );
+
+  server.registerTool(
+    "set_budget",
+    {
+      title: "ตั้งงบประมาณ",
+      description: "ตั้งหรือแก้งบต่อเดือนของหมวดรายจ่าย (ตั้งซ้ำหมวดเดิมจะแก้ค่าเดิม)",
+      inputSchema: {
+        category: z.string().describe("ชื่อหมวดรายจ่ายจาก list_categories"),
+        amount: amountSchema.describe("งบต่อเดือนเป็นบาท"),
+      },
+    },
+    ({ category, amount }) => run(() => setBudget(db, userId, { category, amountSatang: toSatang(amount) })),
+  );
+
+  server.registerTool(
+    "remove_budget",
+    {
+      title: "ลบงบประมาณ",
+      description: "ลบงบของหมวดรายจ่าย",
+      inputSchema: { category: z.string().describe("ชื่อหมวดรายจ่าย") },
+      annotations: { destructiveHint: true },
+    },
+    ({ category }) => run(() => removeBudget(db, userId, category)),
+  );
+
+  server.registerTool(
+    "get_budget_status",
+    {
+      title: "ดูสถานะงบประมาณ",
+      description: "งบแต่ละหมวดกับยอดใช้จริงของเดือนนั้น คงเหลือ กี่ % และสถานะ (green <80% / yellow 80–100% / red >100%)",
+      inputSchema: { month: monthSchema.optional().describe("เดือน YYYY-MM ถ้าไม่ระบุใช้เดือนนี้") },
+      annotations: { readOnlyHint: true },
+    },
+    ({ month }) => run(() => getBudgetStatus(db, userId, month ?? today.slice(0, 7))),
   );
 
   return server;
