@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ChartPie, LogOut, PenLine, Wallet } from "lucide-react";
+import { ChartPie, LogOut, PenLine, PiggyBank, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 const NAV = [
   { href: "/", label: "จด", icon: PenLine },
   { href: "/summary", label: "สรุป", icon: ChartPie },
+  { href: "/budgets", label: "งบ", icon: PiggyBank },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
