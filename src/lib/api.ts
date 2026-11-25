@@ -40,6 +40,31 @@ export interface Summary {
   expenseChangeByCategory: Array<{ categoryName: string; current: number; previous: number; change: number }>;
 }
 
+export type BudgetState = "green" | "yellow" | "red";
+
+export interface BudgetStatusItem {
+  categoryId: string;
+  categoryName: string;
+  icon: string;
+  budgetSatang: number;
+  budget: number;
+  spentSatang: number;
+  spent: number;
+  remainingSatang: number;
+  remaining: number;
+  percent: number;
+  status: BudgetState;
+}
+
+export interface BudgetStatus {
+  month: string;
+  items: BudgetStatusItem[];
+  totalBudgetSatang: number;
+  totalSpentSatang: number;
+  totalBudget: number;
+  totalSpent: number;
+}
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
