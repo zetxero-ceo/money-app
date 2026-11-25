@@ -5,6 +5,7 @@ import {
   addTransactions, deleteTransaction, getSummary, listCategories, listTransactions, restoreTransaction, updateTransaction,
 } from "../src/server/services/transactions";
 import { todayInBangkok } from "../src/server/thai-date";
+import { getBudgetStatus, listBudgets, removeBudget, setBudget } from "../src/server/services/budgets";
 
 async function setup() {
   const db = createTestDb();
@@ -103,5 +104,74 @@ describe("เดาหมวด", () => {
     const { db, userId } = await setup();
     const [t] = await addTransactions(db, userId, [{ note: "ชาไข่มุก", amountSatang: 4500 }], "web");
     expect(t.categoryName).toBe("เครื่องดื่ม/กาแฟ");
+  });
+});
+
+describe("budgets", () => {
+  const thisMonth = () => todayInBangkok().slice(0, 7);
+
+  it("ตั้งงบและ upsert (ตั้งซ้ำหมวดเดิมทับค่าเดิม ไม่สร้างใหม่)", async () => {
+    const { db, userId } = await setup();
+    await setBudget(db, userId, { category: "อาหาร", amountSatang: 500000 }); // 5,000 บาท
+    const again = await setBudget(db, userId, { category: "อาหาร", amountSatang: 600000 }); // แก้เป็น 6,000
+    expect(again).toMatchObject({ categoryName: "อาหาร", amount: 6000 });
+    const all = await listBudgets(db, userId);
+    expect(all).toHaveLength(1);
+    expect(all[0].amount).toBe(6000);
+  });
+
+  it("ปฏิเสธหมวด income และงบ <= 0", async () => {
+    const { db, userId } = await setup();
+    await expect(setBudget(db, userId, { category: "เงินเดือน", amountSatang: 100000 }))
+      .rejects.toMatchObject({ code: "invalid_input" });
+    await expect(setBudget(db, userId, { category: "อาหาร", amountSatang: 0 }))
+      .rejects.toMatchObject({ code: "invalid_input" });
+  });
+
+  it("คำนวณ spent/remaining/percent และเส้นแบ่งสีเหลืองที่ 80%", async () => {
+    const { db, userId } = await setup();
+    await setBudget(db, userId, { category: "อาหาร", amountSatang: 100000 }); // งบ 1,000 บาท
+    await addTransactions(db, userId, [{ note: "ข้าว", amountSatang: 80000, category: "อาหาร" }], "web"); // ใช้ 800
+    const status = await getBudgetStatus(db, userId, thisMonth());
+    const food = status.items.find((i) => i.categoryName === "อาหาร")!;
+    expect(food).toMatchObject({ budget: 1000, spent: 800, remaining: 200, percent: 80, status: "yellow" });
+    expect(status.totalBudget).toBe(1000);
+    expect(status.totalSpent).toBe(800);
+  });
+
+  it("สถานะสี: เขียว <80% และ แดง >100% (เกินงบ remaining ติดลบ)", async () => {
+    const { db, userId } = await setup();
+    await setBudget(db, userId, { category: "อาหาร", amountSatang: 100000 }); // 1,000
+    await setBudget(db, userId, { category: "เครื่องดื่ม/กาแฟ", amountSatang: 100000 }); // 1,000
+    await addTransactions(db, userId, [
+      { note: "ข้าว", amountSatang: 50000, category: "อาหาร" },               // 500 -> 50% เขียว
+      { note: "กาแฟ", amountSatang: 120000, category: "เครื่องดื่ม/กาแฟ" },   // 1,200 -> 120% แดง
+    ], "web");
+    const status = await getBudgetStatus(db, userId, thisMonth());
+    const food = status.items.find((i) => i.categoryName === "อาหาร")!;
+    const drink = status.items.find((i) => i.categoryName === "เครื่องดื่ม/กาแฟ")!;
+    expect(food).toMatchObject({ percent: 50, status: "green" });
+    expect(drink).toMatchObject({ percent: 120, status: "red", remaining: -200 });
+  });
+
+  it("หมวดที่มีงบแต่ยังไม่มีรายจ่าย = spent 0 เขียว", async () => {
+    const { db, userId } = await setup();
+    await setBudget(db, userId, { category: "อาหาร", amountSatang: 100000 });
+    const status = await getBudgetStatus(db, userId, thisMonth());
+    const food = status.items.find((i) => i.categoryName === "อาหาร")!;
+    expect(food).toMatchObject({ spent: 0, percent: 0, status: "green", remaining: 1000 });
+  });
+
+  it("ลบงบของหมวด และลบหมวดที่ยังไม่ตั้งงบ = not_found", async () => {
+    const { db, userId } = await setup();
+    await setBudget(db, userId, { category: "อาหาร", amountSatang: 100000 });
+    await removeBudget(db, userId, "อาหาร");
+    expect(await listBudgets(db, userId)).toHaveLength(0);
+    await expect(removeBudget(db, userId, "อาหาร")).rejects.toMatchObject({ code: "not_found" });
+  });
+
+  it("เดือนผิดรูปแบบ = invalid_input", async () => {
+    const { db, userId } = await setup();
+    await expect(getBudgetStatus(db, userId, "2026-13")).rejects.toMatchObject({ code: "invalid_input" });
   });
 });
